@@ -20,12 +20,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         $error = "Error de validación (CSRF).";
     } else {
-        // Sanitizar y validar entradas
         $amount_post = filter_input(INPUT_POST, 'amount', FILTER_SANITIZE_STRING);
         $from_currency_post = filter_input(INPUT_POST, 'from_currency', FILTER_SANITIZE_STRING);
         $to_currency_post = filter_input(INPUT_POST, 'to_currency', FILTER_SANITIZE_STRING);
 
-        // Actualizar variables para el formulario pegajoso
         $amount = $amount_post;
         $from_currency = $from_currency_post;
         $to_currency = $to_currency_post;
@@ -37,10 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($from_currency === $to_currency) {
             $error = 'Las divisas de origen y destino no pueden ser las mismas.';
         } else {
-            // Construir la URL de la API de Frankfurter
             $api_url = "https://api.frankfurter.app/latest?amount=" . urlencode($amount) . "&from=" . urlencode($from_currency) . "&to=" . urlencode($to_currency);
 
-            // @ suprime warnings si la API falla, lo manejamos nosotros
             $response = @file_get_contents($api_url);
             if ($response === FALSE) {
                 $error = "No se pudo contactar con el servicio de cambio de divisa. Inténtelo más tarde.";
@@ -53,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'from_symbol' => $all_currencies[$from_currency]['symbol'],
                         'to' => $to_currency,
                         'to_symbol' => $all_currencies[$to_currency]['symbol'],
-                        'rate' => $data['rates'][$to_currency] / $amount, // Tasa por unidad
+                        'rate' => $data['rates'][$to_currency] / $amount,
                         'result' => $data['rates'][$to_currency]
                     ];
                 } else {
@@ -72,6 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cambio de Divisa y Gráfico Histórico</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <style>
         :root {
             --primary-color: #005A9C;
@@ -151,6 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         form input[type="text"],
+        form input[type="date"],
         form select {
             width: 100%;
             padding: 0.75rem;
@@ -216,6 +215,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         #chart-container {
             margin-top: 2rem;
         }
+
+        .chart-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+            background-color: var(--light-color);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-top: 1rem;
+        }
+
+        .chart-controls label {
+            font-weight: 600;
+        }
+
+        #chart-message {
+            width: 100%;
+            text-align: center;
+            color: var(--primary-color);
+            font-style: italic;
+            margin-top: 0.5rem;
+        }
     </style>
 </head>
 
@@ -267,20 +289,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <?php if ($conversion_result): ?>
             <div class="results-box">
-                <p>
-                    <?php echo htmlspecialchars($conversion_result['amount']) . ' ' . htmlspecialchars($conversion_result['from']); ?>
-                    es igual a:
-                </p>
+                <p><?php echo htmlspecialchars($conversion_result['amount']) . ' ' . htmlspecialchars($conversion_result['from']); ?>
+                    es igual a:</p>
                 <p class="main-result">
                     <?php echo htmlspecialchars(number_format($conversion_result['result'], 2)) . ' ' . htmlspecialchars($conversion_result['to']); ?>
                 </p>
-                <p class="rate">
-                    Tasa de cambio: 1 <?php echo htmlspecialchars($conversion_result['from']); ?> =
+                <p class="rate">Tasa de cambio: 1 <?php echo htmlspecialchars($conversion_result['from']); ?> =
                     <?php echo htmlspecialchars(number_format($conversion_result['rate'], 4)) . ' ' . htmlspecialchars($conversion_result['to']); ?>
                 </p>
             </div>
 
             <div id="chart-container">
+                <div class="chart-controls">
+                    <label for="period-selector">Período:</label>
+                    <select id="period-selector">
+                        <option value="1m">Último Mes</option>
+                        <option value="3m" selected>Últimos 3 Meses</option>
+                        <option value="6m">Últimos 6 Meses</option>
+                        <option value="1y">Último Año</option>
+                        <option value="3y">Últimos 3 Años</option>
+                        <option value="5y">Últimos 5 Años</option>
+                        <option value="10y">Últimos 10 Años</option>
+                        <option value="max">Desde 1999</option>
+                        <option value="custom">Rango Personalizado</option>
+                    </select>
+                    <div id="custom-range-picker" style="display:none; gap: 1rem;">
+                        <label for="start-date">Inicio:</label>
+                        <input type="date" id="start-date">
+                        <label for="end-date">Fin:</label>
+                        <input type="date" id="end-date">
+                        <button id="update-chart-button">Actualizar</button>
+                    </div>
+                </div>
+                <div id="chart-message"></div>
                 <canvas id="historicalChart"></canvas>
             </div>
         <?php endif; ?>
@@ -288,53 +329,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 
     <script>
-        // Este bloque de script solo se ejecuta si hubo una conversión exitosa
         <?php if ($conversion_result): ?>
             document.addEventListener('DOMContentLoaded', function () {
-                // Pasar las variables de PHP a JavaScript de forma segura
                 const fromCurrency = '<?php echo addslashes($conversion_result['from']); ?>';
                 const toCurrency = '<?php echo addslashes($conversion_result['to']); ?>';
+                const earliestApiDate = '1999-01-04';
+                // SIMULAMOS LA FECHA ACTUAL PARA COHERENCIA CON EL CONTEXTO
+                const today = new Date('2025-06-18');
 
-                // Calcular las fechas para el historial (últimos 90 días)
-                const endDate = new Date().toISOString().split('T')[0];
-                const startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const periodSelector = document.getElementById('period-selector');
+                const customRangePicker = document.getElementById('custom-range-picker');
+                const startDateInput = document.getElementById('start-date');
+                const endDateInput = document.getElementById('end-date');
+                const updateChartButton = document.getElementById('update-chart-button');
+                const chartMessage = document.getElementById('chart-message');
+                const ctx = document.getElementById('historicalChart').getContext('2d');
+                let chartInstance = null;
 
-                // Construir la URL de la API para el historial
-                const historyApiUrl = `https://api.frankfurter.app/${startDate}..${endDate}?from=${fromCurrency}&to=${toCurrency}`;
+                // Configurar límites de fecha
+                endDateInput.max = formatDate(today);
+                endDateInput.value = formatDate(today);
+                startDateInput.max = formatDate(today);
 
-                // Obtener los datos del historial con Fetch API
-                fetch(historyApiUrl)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.rates) {
-                            const rates = data.rates;
-                            const sortedDates = Object.keys(rates).sort();
+                function formatDate(date) {
+                    return date.toISOString().split('T')[0];
+                }
 
-                            const chartLabels = sortedDates;
-                            const chartData = sortedDates.map(date => rates[date][toCurrency]);
+                function fetchAndRenderChart(startDateStr, endDateStr) {
+                    let adjustedStartDateStr = startDateStr;
+                    chartMessage.textContent = ''; // Limpiar mensaje
 
-                            renderChart(chartLabels, chartData, fromCurrency, toCurrency);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error al obtener datos históricos:', error);
-                        document.getElementById('chart-container').innerHTML = '<p class="error">No se pudo cargar el gráfico histórico.</p>';
-                    });
+                    // Validar y ajustar fecha de inicio
+                    if (new Date(startDateStr) < new Date(earliestApiDate)) {
+                        adjustedStartDateStr = earliestApiDate;
+                        chartMessage.textContent = 'Aviso: La fecha de inicio se ha ajustado al primer día con datos disponibles (04/01/1999).';
+                    }
 
-                // Función para dibujar el gráfico con Chart.js
-                function renderChart(labels, data, from, to) {
-                    const ctx = document.getElementById('historicalChart').getContext('2d');
+                    const historyApiUrl = `https://api.frankfurter.app/${adjustedStartDateStr}..${endDateStr}?from=${fromCurrency}&to=${toCurrency}`;
 
-                    new Chart(ctx, {
+                    fetch(historyApiUrl)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.rates && Object.keys(data.rates).length > 0) {
+                                const rates = data.rates;
+                                const sortedDates = Object.keys(rates).sort((a, b) => new Date(a) - new Date(b));
+                                const chartData = sortedDates.map(date => rates[date][toCurrency]);
+                                renderChart(sortedDates, chartData);
+                            } else {
+                                chartMessage.textContent = 'No hay datos disponibles para el período o divisas seleccionadas.';
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error al obtener datos históricos:', error);
+                            chartMessage.textContent = 'Error: No se pudo cargar el gráfico histórico.';
+                        });
+                }
+
+                function renderChart(labels, data) {
+                    if (chartInstance) {
+                        chartInstance.destroy();
+                    }
+                    chartInstance = new Chart(ctx, {
                         type: 'line',
                         data: {
                             labels: labels,
                             datasets: [{
-                                label: `Tasa de cambio 1 ${from} a ${to}`,
+                                label: `Tasa de cambio 1 ${fromCurrency} a ${toCurrency}`,
                                 data: data,
                                 borderColor: '#005A9C',
                                 backgroundColor: 'rgba(59, 130, 246, 0.1)',
                                 borderWidth: 2,
+                                pointRadius: 1,
                                 fill: true,
                                 tension: 0.1
                             }]
@@ -343,27 +408,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             responsive: true,
                             scales: {
                                 x: {
-                                    display: true,
-                                    title: {
-                                        display: true,
-                                        text: 'Fecha'
-                                    }
+                                    type: 'time',
+                                    time: { unit: 'month' },
+                                    title: { display: true, text: 'Fecha' }
                                 },
-                                y: {
-                                    display: true,
-                                    title: {
-                                        display: true,
-                                        text: 'Tasa de Cambio'
-                                    }
-                                }
+                                y: { title: { display: true, text: 'Tasa de Cambio' } }
                             }
                         }
                     });
                 }
+
+                function updateChartFromSelection() {
+                    const period = periodSelector.value;
+                    customRangePicker.style.display = (period === 'custom') ? 'flex' : 'none';
+
+                    if (period === 'custom') return;
+
+                    let startDate = new Date(today);
+                    const endDate = new Date(today);
+
+                    // Permitimos seleccionar hasta 5 meses en el futuro desde la fecha actual
+                    const futureLimit = new Date(today);
+                    futureLimit.setMonth(futureLimit.getMonth() + 5);
+
+                    if (endDate > futureLimit) {
+                        endDate.setTime(futureLimit.getTime());
+                    }
+
+                    switch (period) {
+                        case '1m': startDate.setMonth(startDate.getMonth() - 1); break;
+                        case '3m': startDate.setMonth(startDate.getMonth() - 3); break;
+                        case '6m': startDate.setMonth(startDate.getMonth() - 6); break;
+                        case '1y': startDate.setFullYear(startDate.getFullYear() - 1); break;
+                        case '3y': startDate.setFullYear(startDate.getFullYear() - 3); break;
+                        case '5y': startDate.setFullYear(startDate.getFullYear() - 5); break;
+                        case '10y': startDate.setFullYear(startDate.getFullYear() - 10); break;
+                        case 'max': startDate = new Date(earliestApiDate); break;
+                    }
+
+                    fetchAndRenderChart(formatDate(startDate), formatDate(endDate));
+                }
+
+                periodSelector.addEventListener('change', updateChartFromSelection);
+                updateChartButton.addEventListener('click', () => {
+                    const startDate = startDateInput.value;
+                    const endDate = endDateInput.value;
+                    if (startDate && endDate && new Date(startDate) <= new Date(endDate)) {
+                        fetchAndRenderChart(startDate, endDate);
+                    } else {
+                        chartMessage.textContent = 'Error: La fecha de inicio debe ser anterior o igual a la fecha de fin.';
+                    }
+                });
+
+                // Cargar el gráfico inicial (últimos 3 meses por defecto)
+                updateChartFromSelection();
             });
         <?php endif; ?>
     </script>
-
 </body>
 
 </html>

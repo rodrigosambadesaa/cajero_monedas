@@ -350,7 +350,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php if ($resultados && isset($resultados['solucion'])): ?>
             <div class="results">
                 <h2>Cambio para <?php echo htmlspecialchars($resultados['cantidad']); ?> en
-                    <?php echo htmlspecialchars($resultados['moneda_nombre']); ?>:</h2>
+                    <?php echo htmlspecialchars($resultados['moneda_nombre']); ?>:
+                </h2>
                 <ul>
                     <?php foreach ($resultados['solucion'] as $valor => $cantidad_moneda): ?>
                         <li>
