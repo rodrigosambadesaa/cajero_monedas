@@ -1,191 +1,104 @@
 <?php
-// Iniciar la sesión para la protección CSRF. Debe ser lo primero.
 session_start();
+require_once 'funciones.php';
 
-// --- ZONA DE SEGURIDAD Y FUNCIONES ---
+if (!function_exists('bcadd')) {
+    die('Error: La extensión BCMath de PHP es necesaria.');
+}
 
-// Generar un token CSRF si no existe uno.
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-/**
- * Función para leer los datos de monedas o stock de los ficheros de texto.
- * Es una función segura que valida el nombre de la moneda para evitar ataques de Path Traversal.
- *
- * @param string $currency El nombre de la moneda (ej. 'euro').
- * @param string $file El fichero a leer ('monedas' o 'stock').
- * @return array|null Un array con los datos o null si la moneda no es válida.
- */
-function leerDatosMoneda(string $currency, string $file = 'monedas'): ?array
-{
-    // LISTA BLANCA DE MONEDAS: ¡Medida de seguridad CRÍTICA!
-    // Evita que un atacante pueda intentar leer otros ficheros del sistema (ej. ../../etc/passwd)
-    $monedasPermitidas = ['euro', 'dolar', 'yen'];
-    if (!in_array($currency, $monedasPermitidas)) {
-        return null; // Moneda no válida, abortar.
-    }
+// Cargar datos al inicio
+$all_currencies = get_all_currencies();
+$all_stock = get_all_stock();
 
-    $filename = $file === 'monedas' ? 'monedas.txt' : 'stock.txt';
-    if (!file_exists($filename)) {
-        return null;
-    }
+// --- INICIO: Variables para persistencia del formulario ---
+$selected_currency_code = 'EUR'; // Valor por defecto
+$selected_mode = 'infinito';     // Valor por defecto
+$cantidad_str = '';              // Valor por defecto
+// --- FIN: Variables para persistencia del formulario ---
 
-    $lines = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    $datos = [];
-    $encontrada = false;
-    foreach ($lines as $line) {
-        if ($encontrada) {
-            if (is_numeric($line)) {
-                $datos[] = (int) $line;
-            } else {
-                break; // Fin de la sección de esta moneda
-            }
-        }
-        if (trim($line) === $currency) {
-            $encontrada = true;
-        }
-    }
-    return $datos;
-}
-
-/**
- * Función para escribir el nuevo stock en el fichero.
- * Utiliza un bloqueo de fichero (flock) para evitar condiciones de carrera si dos
- * usuarios realizan una operación simultáneamente, lo que podría corromper el fichero.
- *
- * @param string $currency La moneda a actualizar.
- * @param array $valoresMonedas Array con los valores de las monedas (200, 100, etc.)
- * @param array $nuevoStock Array con las nuevas cantidades de stock.
- * @return bool True si se escribió correctamente, false en caso de error.
- */
-function escribirStock(string $currency, array $valoresMonedas, array $nuevoStock): bool
-{
-    $monedasPermitidas = ['euro', 'dolar', 'yen'];
-    if (!in_array($currency, $monedasPermitidas)) {
-        return false;
-    }
-
-    $filename = 'stock.txt';
-    $tempFilename = 'stock.tmp';
-
-    $fp = fopen($filename, 'r');
-    $tempFp = fopen($tempFilename, 'w');
-
-    if (!$fp || !$tempFp)
-        return false;
-
-    // Bloquear el fichero original para escritura exclusiva.
-    if (flock($fp, LOCK_EX)) {
-        $encontrada = false;
-        while (($line = fgets($fp)) !== false) {
-            $trimmedLine = trim($line);
-            if (!$encontrada && $trimmedLine === $currency) {
-                $encontrada = true;
-                fwrite($tempFp, $line); // Escribir el nombre de la moneda
-                foreach ($nuevoStock as $cantidad) {
-                    fwrite($tempFp, $cantidad . PHP_EOL);
-                }
-                // Saltar las líneas del stock antiguo en el fichero original
-                foreach ($valoresMonedas as $_) {
-                    fgets($fp);
-                }
-            } else {
-                fwrite($tempFp, $line);
-            }
-        }
-        flock($fp, LOCK_UN); // Desbloquear
-    } else {
-        return false;
-    }
-
-    fclose($fp);
-    fclose($tempFp);
-
-    // Reemplazar el fichero original con el temporal
-    rename($tempFilename, $filename);
-    return true;
-}
-
-
-// --- LÓGICA DE PROCESAMIENTO DEL FORMULARIO ---
 $resultados = null;
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // 1. Verificación del Token CSRF
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
-        $error = "Error de validación (CSRF). Inténtelo de nuevo.";
+        $error = "Error de validación (CSRF).";
     } else {
-        // 2. Sanitización y Validación de Entradas
-        $moneda = filter_input(INPUT_POST, 'moneda', FILTER_SANITIZE_STRING);
+        $currency_code = filter_input(INPUT_POST, 'moneda', FILTER_SANITIZE_STRING);
         $modo = filter_input(INPUT_POST, 'modo', FILTER_SANITIZE_STRING);
-        $cantidad = filter_input(INPUT_POST, 'cantidad', FILTER_VALIDATE_INT);
+        $cantidad_post = filter_input(INPUT_POST, 'cantidad', FILTER_SANITIZE_STRING);
 
-        if (!$moneda || !$modo || $cantidad === false || $cantidad <= 0) {
-            $error = "Todos los campos son obligatorios y la cantidad debe ser un número positivo.";
+        // --- INICIO: Actualizar variables de persistencia con datos del POST ---
+        $selected_currency_code = $currency_code;
+        $selected_mode = $modo;
+        $cantidad_str = $cantidad_post;
+        // --- FIN: Actualizar variables de persistencia ---
+
+        if (!isset($all_currencies[$currency_code])) {
+            $error = "La divisa seleccionada no es válida.";
+        } elseif (!preg_match('/^\d+$/', $cantidad_post) || ltrim($cantidad_post, '0') === '') {
+            $error = "La cantidad debe ser un número positivo.";
         } else {
-            $valoresMonedas = leerDatosMoneda($moneda, 'monedas');
-            if ($valoresMonedas === null) {
-                $error = "La moneda seleccionada no es válida.";
-            } else {
-                $solucion = [];
-                $suma = 0;
-                $cambioPosible = false;
+            $denominations = $all_currencies[$currency_code]['denominations'];
+            $solucion = [];
+            $cambioPosible = false;
 
-                if ($modo === 'infinito') {
-                    $cantidadRestante = $cantidad;
-                    foreach ($valoresMonedas as $valor) {
-                        if ($cantidadRestante >= $valor) {
-                            $numMonedas = floor($cantidadRestante / $valor);
-                            $solucion[$valor] = $numMonedas;
-                            $cantidadRestante -= $numMonedas * $valor;
-                        }
+            if ($modo === 'infinito') {
+                $cantidadRestante_str = $cantidad_post;
+                foreach ($denominations as $valor) {
+                    $valor_str = (string) $valor;
+                    if (bccomp($cantidadRestante_str, $valor_str) >= 0) {
+                        $numMonedas_str = bcdiv($cantidadRestante_str, $valor_str, 0);
+                        $solucion[$valor] = $numMonedas_str;
+                        $decremento = bcmul($numMonedas_str, $valor_str);
+                        $cantidadRestante_str = bcsub($cantidadRestante_str, $decremento);
                     }
-                    if ($cantidadRestante == 0)
-                        $cambioPosible = true;
+                }
+                if (bccomp($cantidadRestante_str, '0') == 0)
+                    $cambioPosible = true;
 
-                } elseif ($modo === 'limitado') {
-                    $stockActual = leerDatosMoneda($moneda, 'stock');
-                    if (count($valoresMonedas) !== count($stockActual)) {
-                        $error = "Inconsistencia de datos entre monedas y stock.";
+            } elseif ($modo === 'limitado') {
+                $stockTemporal = $all_stock;
+                $cantidadRestante_str = $cantidad_post;
+
+                foreach ($denominations as $valor) {
+                    $valor_str = (string) $valor;
+                    $monedasAUsar_str = bcdiv($cantidadRestante_str, $valor_str, 0);
+                    $monedasDisponibles_str = $stockTemporal[$currency_code][$valor_str];
+
+                    $monedasReales_str = (bccomp($monedasAUsar_str, $monedasDisponibles_str) > 0) ? $monedasDisponibles_str : $monedasAUsar_str;
+
+                    if (bccomp($monedasReales_str, '0') > 0) {
+                        $solucion[$valor] = $monedasReales_str;
+                        $decremento = bcmul($monedasReales_str, $valor_str);
+                        $cantidadRestante_str = bcsub($cantidadRestante_str, $decremento);
+                        $stockTemporal[$currency_code][$valor_str] = bcsub($stockTemporal[$currency_code][$valor_str], $monedasReales_str);
+                    }
+                }
+
+                if (bccomp($cantidadRestante_str, '0') == 0) {
+                    $cambioPosible = true;
+                    if (!write_all_stock($stockTemporal)) {
+                        $error = "El cambio se calculó, pero hubo un error al actualizar el stock.";
                     } else {
-                        $stockTemporal = $stockActual;
-                        $cantidadRestante = $cantidad;
-                        foreach ($valoresMonedas as $i => $valor) {
-                            $monedasAUsar = floor($cantidadRestante / $valor);
-                            $monedasDisponibles = $stockTemporal[$i];
-                            $monedasReales = min($monedasAUsar, $monedasDisponibles);
-
-                            if ($monedasReales > 0) {
-                                $solucion[$valor] = $monedasReales;
-                                $cantidadRestante -= $monedasReales * $valor;
-                                $stockTemporal[$i] -= $monedasReales;
-                            }
-                        }
-
-                        if ($cantidadRestante == 0) {
-                            $cambioPosible = true;
-                            // Si el cambio fue posible, actualizar el fichero de stock
-                            if (!escribirStock($moneda, $valoresMonedas, $stockTemporal)) {
-                                $error = "El cambio se calculó, pero hubo un error al actualizar el stock.";
-                            } else {
-                                $resultados['stock_actualizado'] = true;
-                                // Combinar el stock actualizado con los valores de moneda para mostrarlo
-                                $resultados['stock_final'] = array_combine($valoresMonedas, $stockTemporal);
-                            }
-                        }
+                        $all_stock = $stockTemporal;
+                        $resultados['stock_actualizado'] = true;
+                        $resultados['stock_final'] = $all_stock[$currency_code];
                     }
                 }
-
-                if ($cambioPosible) {
-                    $resultados['solucion'] = $solucion;
-                } else if (!$error) {
-                    $error = "No es posible dar el cambio exacto para esa cantidad con las monedas disponibles.";
-                }
-                $resultados['moneda'] = $moneda;
-                $resultados['cantidad'] = $cantidad;
             }
+
+            if ($cambioPosible) {
+                $resultados['solucion'] = $solucion;
+            } else if (!$error) {
+                $error = "No es posible dar el cambio exacto para esa cantidad.";
+            }
+            $resultados['moneda_nombre'] = $all_currencies[$currency_code]['name'];
+            $resultados['moneda_simbolo'] = $all_currencies[$currency_code]['symbol'];
+            $resultados['cantidad'] = $cantidad_post;
         }
     }
 }
@@ -196,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cajero de Cambio</title>
+    <title>Cajero de Cambio Universal</title>
     <style>
         :root {
             --primary-color: #005A9C;
@@ -206,6 +119,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             --text-color: #333;
             --white-color: #FFFFFF;
             --border-radius: 8px;
+            --danger-color: #DC2626;
+            --danger-light: #FEE2E2;
         }
 
         body {
@@ -246,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: var(--dark-color);
         }
 
-        form input[type="number"],
+        form input[type="text"],
         form select {
             width: 100%;
             padding: 0.75rem;
@@ -262,11 +177,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-weight: normal;
         }
 
+        .form-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+
         form button {
-            width: 100%;
+            flex-grow: 1;
             padding: 0.8rem;
-            background-color: var(--secondary-color);
-            color: var(--white-color);
             border: none;
             border-radius: var(--border-radius);
             font-size: 1.1rem;
@@ -275,8 +193,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             transition: background-color 0.3s;
         }
 
-        form button:hover {
+        button[type="submit"] {
+            background-color: var(--secondary-color);
+            color: var(--white-color);
+        }
+
+        button[type="submit"]:hover {
             background-color: var(--dark-color);
+        }
+
+        button[type="reset"] {
+            background-color: var(--danger-light);
+            color: var(--danger-color);
+            border: 1px solid var(--danger-color);
+        }
+
+        button[type="reset"]:hover {
+            background-color: var(--danger-color);
+            color: var(--white-color);
         }
 
         .results,
@@ -286,6 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             padding: 1rem;
             border-radius: var(--border-radius);
             border-left: 5px solid;
+            word-break: break-all;
         }
 
         .error {
@@ -318,6 +253,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .results li {
             padding: 0.5rem 0;
             border-bottom: 1px solid #E0E7FF;
+            display: flex;
+            justify-content: space-between;
         }
 
         .results li:last-child {
@@ -342,65 +279,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 
 <body>
-
     <div class="container">
-        <h1>Cajero de Cambio</h1>
-
+        <h1>Cajero de Cambio Universal</h1>
         <form action="index.php" method="post">
             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
-
             <div class="form-group">
                 <label for="moneda">Seleccione la Divisa</label>
                 <select name="moneda" id="moneda" required>
-                    <option value="euro">Euro</option>
-                    <option value="dolar">Dólar</option>
-                    <option value="yen">Yen</option>
+                    <?php foreach ($all_currencies as $code => $details): ?>
+                        <?php // INICIO: Lógica para mantener la selección ?>
+                        <option value="<?php echo $code; ?>" <?php echo ($code === $selected_currency_code) ? 'selected' : ''; ?>>
+                            <?php echo htmlspecialchars($details['name']) . " ($code)"; ?>
+                        </option>
+                        <?php // FIN: Lógica para mantener la selección ?>
+                    <?php endforeach; ?>
                 </select>
             </div>
-
             <div class="form-group">
                 <label>Modo de operación</label>
                 <div class="radio-group">
-                    <input type="radio" id="infinito" name="modo" value="infinito" checked>
+                    <?php // INICIO: Lógica para mantener la selección del radio button ?>
+                    <input type="radio" id="infinito" name="modo" value="infinito" <?php echo ($selected_mode === 'infinito') ? 'checked' : ''; ?>>
                     <label for="infinito">Monedas Infinitas</label>
-                    <input type="radio" id="limitado" name="modo" value="limitado">
+                    <input type="radio" id="limitado" name="modo" value="limitado" <?php echo ($selected_mode === 'limitado') ? 'checked' : ''; ?>>
                     <label for="limitado">Stock Limitado</label>
+                    <?php // FIN: Lógica para mantener la selección del radio button ?>
                 </div>
             </div>
-
             <div class="form-group">
-                <label for="cantidad">Cantidad a devolver (en céntimos/unidades mínimas)</label>
-                <input type="number" id="cantidad" name="cantidad" min="1" required>
+                <label for="cantidad">Cantidad a devolver (en la unidad mínima)</label>
+                <?php // INICIO: Lógica para mantener el valor introducido ?>
+                <input type="text" id="cantidad" name="cantidad" inputmode="numeric" pattern="[0-9]*" required
+                    value="<?php echo htmlspecialchars($cantidad_str); ?>">
+                <?php // FIN: Lógica para mantener el valor introducido ?>
             </div>
 
-            <button type="submit">Calcular Cambio</button>
+            <div class="form-buttons">
+                <button type="submit">Calcular Cambio</button>
+                <button type="reset">Resetear</button>
+            </div>
         </form>
 
         <?php if ($error): ?>
-            <div class="error">
-                <strong>Error:</strong> <?php echo htmlspecialchars($error); ?>
-            </div>
-        <?php endif; ?>
+            <div class="error"><strong>Error:</strong> <?php echo htmlspecialchars($error); ?></div> <?php endif; ?>
 
         <?php if ($resultados && isset($resultados['solucion'])): ?>
             <div class="results">
-                <h2>Cambio para <?php echo htmlspecialchars($resultados['cantidad']); ?>
-                    <?php echo htmlspecialchars($resultados['moneda']); ?>s:</h2>
+                <h2>Cambio para <?php echo htmlspecialchars($resultados['cantidad']); ?> en
+                    <?php echo htmlspecialchars($resultados['moneda_nombre']); ?>:</h2>
                 <ul>
                     <?php foreach ($resultados['solucion'] as $valor => $cantidad_moneda): ?>
-                        <li><strong><?php echo htmlspecialchars($cantidad_moneda); ?></strong> x moneda(s) de
-                            <strong><?php echo htmlspecialchars($valor); ?></strong></li>
+                        <li>
+                            <span><strong><?php echo htmlspecialchars($cantidad_moneda); ?></strong> x billete/moneda de</span>
+                            <span><strong><?php echo htmlspecialchars(bcdiv((string) $valor, '100', 2)) . ' ' . $resultados['moneda_simbolo']; ?></strong></span>
+                        </li>
                     <?php endforeach; ?>
                 </ul>
-                <?php if (isset($resultados['stock_actualizado']) && $resultados['stock_actualizado']): ?>
+                <?php if (isset($resultados['stock_actualizado'])): ?>
                     <div class="success">¡El stock ha sido actualizado correctamente!</div>
                 <?php endif; ?>
                 <?php if (isset($resultados['stock_final'])): ?>
                     <h3>Stock Restante:</h3>
                     <ul>
                         <?php foreach ($resultados['stock_final'] as $valor => $stock): ?>
-                            <li>Moneda de <strong><?php echo htmlspecialchars($valor); ?></strong>:
-                                <strong><?php echo htmlspecialchars($stock); ?></strong> unidades</li>
+                            <li>
+                                <span>Moneda de
+                                    <?php echo htmlspecialchars(bcdiv($valor, '100', 2)) . ' ' . $resultados['moneda_simbolo']; ?>:</span>
+                                <span><strong><?php echo htmlspecialchars($stock); ?></strong> unidades</span>
+                            </li>
                         <?php endforeach; ?>
                     </ul>
                 <?php endif; ?>
@@ -411,7 +357,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <a href="reponer.php">Ir a reponer stock &rarr;</a>
         </div>
     </div>
-
 </body>
 
 </html>

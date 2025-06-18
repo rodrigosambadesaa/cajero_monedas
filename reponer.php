@@ -1,126 +1,51 @@
 <?php
 session_start();
+require_once 'funciones.php';
 
-// --- ZONA DE SEGURIDAD Y FUNCIONES (reutilizadas de index.php) ---
+if (!function_exists('bcadd')) {
+    die('Error: La extensión BCMath de PHP es necesaria.');
+}
+
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-function leerDatosMoneda(string $currency, string $file = 'monedas'): ?array
-{
-    $monedasPermitidas = ['euro', 'dolar', 'yen'];
-    if (!in_array($currency, $monedasPermitidas))
-        return null;
-    $filename = $file === 'monedas' ? 'monedas.txt' : 'stock.txt';
-    if (!file_exists($filename))
-        return null;
-    $lines = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    $datos = [];
-    $encontrada = false;
-    foreach ($lines as $line) {
-        if ($encontrada) {
-            if (is_numeric($line))
-                $datos[] = (int) $line;
-            else
-                break;
-        }
-        if (trim($line) === $currency)
-            $encontrada = true;
-    }
-    return $datos;
-}
+// Cargar datos al inicio
+$all_currencies = get_all_currencies();
+$all_stock = get_all_stock();
 
-function escribirStock(string $currency, array $valoresMonedas, array $nuevoStock): bool
-{
-    $monedasPermitidas = ['euro', 'dolar', 'yen'];
-    if (!in_array($currency, $monedasPermitidas))
-        return false;
-    $filename = 'stock.txt';
-    $tempFilename = 'stock.tmp';
-    $fp = fopen($filename, 'r');
-    $tempFp = fopen($tempFilename, 'w');
-    if (!$fp || !$tempFp)
-        return false;
-    if (flock($fp, LOCK_EX)) {
-        $encontrada = false;
-        while (($line = fgets($fp)) !== false) {
-            $trimmedLine = trim($line);
-            if (!$encontrada && $trimmedLine === $currency) {
-                $encontrada = true;
-                fwrite($tempFp, $line);
-                foreach ($nuevoStock as $cantidad) {
-                    fwrite($tempFp, $cantidad . PHP_EOL);
-                }
-                foreach ($valoresMonedas as $_) {
-                    fgets($fp);
-                }
-            } else {
-                fwrite($tempFp, $line);
-            }
-        }
-        flock($fp, LOCK_UN);
-    } else {
-        return false;
-    }
-    fclose($fp);
-    fclose($tempFp);
-    rename($tempFilename, $filename);
-    return true;
-}
-
-// --- LÓGICA DE PROCESAMIENTO ---
-$monedaSeleccionada = null;
-$valoresMonedas = null;
-$stockActual = null;
+$currency_code = null;
 $mensaje = '';
 $error = '';
 
-// Paso 1: Seleccionar moneda (puede ser por GET o POST)
 if (isset($_REQUEST['moneda'])) {
-    $monedaSeleccionada = filter_input(
-        isset($_POST['moneda']) ? INPUT_POST : INPUT_GET,
-        'moneda',
-        FILTER_SANITIZE_STRING
-    );
-    $valoresMonedas = leerDatosMoneda($monedaSeleccionada, 'monedas');
-    $stockActual = leerDatosMoneda($monedaSeleccionada, 'stock');
-
-    if ($valoresMonedas === null) {
-        $error = "La moneda seleccionada no es válida.";
-        $monedaSeleccionada = null;
+    $temp_code = filter_input(isset($_POST['moneda']) ? INPUT_POST : INPUT_GET, 'moneda', FILTER_SANITIZE_STRING);
+    if (isset($all_currencies[$temp_code])) {
+        $currency_code = $temp_code;
+    } else {
+        $error = "La divisa seleccionada no es válida.";
     }
 }
 
-// Paso 2: Procesar la actualización del stock (solo POST)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
-        $error = "Error de validación (CSRF). Inténtelo de nuevo.";
-    } else {
+        $error = "Error de validación (CSRF).";
+    } elseif ($currency_code) {
         $stockInput = $_POST['stock'];
-        $nuevoStock = [];
         $valido = true;
-        // Sanitizar y validar cada entrada de stock
-        foreach ($stockInput as $valor => $cantidad) {
-            $cantidadFiltrada = filter_var($cantidad, FILTER_VALIDATE_INT);
-            if ($cantidadFiltrada === false || $cantidadFiltrada < 0) {
-                $error = "La cantidad para la moneda de $valor debe ser un número entero no negativo.";
+
+        foreach ($stockInput as $denomination => $cantidad_str) {
+            if (!preg_match('/^\d+$/', $cantidad_str)) {
+                $error = "La cantidad para la denominación $denomination debe ser un número entero no negativo.";
                 $valido = false;
                 break;
             }
-            $nuevoStock[(int) $valor] = $cantidadFiltrada;
+            $all_stock[$currency_code][(string) $denomination] = $cantidad_str;
         }
 
         if ($valido) {
-            // Reordenar el array de nuevo stock para que coincida con el orden de valoresMonedas
-            $stockOrdenado = [];
-            foreach ($valoresMonedas as $valor) {
-                $stockOrdenado[] = $nuevoStock[$valor];
-            }
-
-            if (escribirStock($monedaSeleccionada, $valoresMonedas, $stockOrdenado)) {
-                $mensaje = "¡El stock para '$monedaSeleccionada' ha sido actualizado correctamente!";
-                // Recargar el stock para mostrar los nuevos valores
-                $stockActual = leerDatosMoneda($monedaSeleccionada, 'stock');
+            if (write_all_stock($all_stock)) {
+                $mensaje = "¡El stock para '" . htmlspecialchars($all_currencies[$currency_code]['name']) . "' ha sido actualizado!";
             } else {
                 $error = "Hubo un error al escribir en el fichero de stock.";
             }
@@ -134,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reponer Stock</title>
+    <title>Reponer Stock Universal</title>
     <style>
         :root {
             --primary-color: #005A9C;
@@ -144,6 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             --text-color: #333;
             --white-color: #FFFFFF;
             --border-radius: 8px;
+            --danger-color: #DC2626;
+            --danger-light: #FEE2E2;
         }
 
         body {
@@ -184,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             color: var(--dark-color);
         }
 
-        form input[type="number"],
+        form input[type="text"],
         form select {
             width: 100%;
             padding: 0.75rem;
@@ -194,11 +121,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             font-size: 1rem;
         }
 
+        .form-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+
         form button {
-            width: 100%;
+            flex-grow: 1;
             padding: 0.8rem;
-            background-color: var(--secondary-color);
-            color: var(--white-color);
             border: none;
             border-radius: var(--border-radius);
             font-size: 1.1rem;
@@ -207,8 +137,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             transition: background-color 0.3s;
         }
 
-        form button:hover {
+        button[type="submit"] {
+            background-color: var(--secondary-color);
+            color: var(--white-color);
+        }
+
+        button[type="submit"]:hover {
             background-color: var(--dark-color);
+        }
+
+        button[type="reset"] {
+            background-color: var(--danger-light);
+            color: var(--danger-color);
+            border: 1px solid var(--danger-color);
+        }
+
+        button[type="reset"]:hover {
+            background-color: var(--danger-color);
+            color: var(--white-color);
         }
 
         .error,
@@ -217,6 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             padding: 1rem;
             border-radius: var(--border-radius);
             border-left: 5px solid;
+            word-break: break-all;
         }
 
         .error {
@@ -253,52 +200,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
         }
 
         .stock-item input {
-            width: 40%;
+            width: 50%;
         }
     </style>
 </head>
 
 <body>
-
     <div class="container">
         <h1>Reponer Stock</h1>
 
         <?php if ($mensaje): ?>
-            <div class="success"><?php echo htmlspecialchars($mensaje); ?></div>
-        <?php endif; ?>
+            <div class="success"><?php echo htmlspecialchars($mensaje); ?></div> <?php endif; ?>
         <?php if ($error): ?>
-            <div class="error"><?php echo htmlspecialchars($error); ?></div>
-        <?php endif; ?>
+            <div class="error"><?php echo htmlspecialchars($error); ?></div> <?php endif; ?>
 
         <form action="reponer.php" method="get">
             <div class="form-group">
                 <label for="moneda">Seleccione la Divisa para Reponer</label>
                 <select name="moneda" id="moneda" onchange="this.form.submit()">
                     <option value="">-- Seleccionar --</option>
-                    <option value="euro" <?php echo ($monedaSeleccionada === 'euro' ? 'selected' : ''); ?>>Euro</option>
-                    <option value="dolar" <?php echo ($monedaSeleccionada === 'dolar' ? 'selected' : ''); ?>>Dólar
-                    </option>
-                    <option value="yen" <?php echo ($monedaSeleccionada === 'yen' ? 'selected' : ''); ?>>Yen</option>
+                    <?php foreach ($all_currencies as $code => $details): ?>
+                        <option value="<?php echo $code; ?>" <?php echo ($currency_code === $code ? 'selected' : ''); ?>>
+                            <?php echo htmlspecialchars($details['name']) . " ($code)"; ?>
+                        </option>
+                    <?php endforeach; ?>
                 </select>
             </div>
         </form>
 
-        <?php if ($monedaSeleccionada && $valoresMonedas && $stockActual): ?>
+        <?php if ($currency_code): ?>
             <hr>
-            <h3>Actualizar stock para: <?php echo htmlspecialchars(ucfirst($monedaSeleccionada)); ?></h3>
+            <h3>Actualizar stock para: <?php echo htmlspecialchars($all_currencies[$currency_code]['name']); ?></h3>
             <form action="reponer.php" method="post">
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
-                <input type="hidden" name="moneda" value="<?php echo htmlspecialchars($monedaSeleccionada); ?>">
+                <input type="hidden" name="moneda" value="<?php echo htmlspecialchars($currency_code); ?>">
 
-                <?php foreach ($valoresMonedas as $index => $valor): ?>
+                <?php foreach ($all_currencies[$currency_code]['denominations'] as $denomination):
+                    $denomination_str = (string) $denomination;
+                    $current_stock = $all_stock[$currency_code][$denomination_str] ?? '0';
+                    ?>
                     <div class="form-group stock-item">
-                        <label for="stock_<?php echo $valor; ?>">Monedas de <?php echo $valor; ?>:</label>
-                        <input type="number" name="stock[<?php echo $valor; ?>]" id="stock_<?php echo $valor; ?>"
-                            value="<?php echo $stockActual[$index]; ?>" min="0" required>
+                        <label for="stock_<?php echo $denomination_str; ?>">
+                            Billetes/monedas de
+                            <?php echo htmlspecialchars(bcdiv($denomination_str, '100', 2)) . ' ' . $all_currencies[$currency_code]['symbol']; ?>:
+                        </label>
+                        <input type="text" inputmode="numeric" pattern="[0-9]*" name="stock[<?php echo $denomination_str; ?>]"
+                            id="stock_<?php echo $denomination_str; ?>" value="<?php echo htmlspecialchars($current_stock); ?>"
+                            required>
                     </div>
                 <?php endforeach; ?>
 
-                <button type="submit">Actualizar Stock</button>
+                <div class="form-buttons">
+                    <button type="submit">Actualizar Stock</button>
+                    <button type="reset">Resetear</button>
+                </div>
             </form>
         <?php endif; ?>
 
@@ -306,7 +261,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             <a href="index.php">&larr; Volver a la calculadora</a>
         </div>
     </div>
-
 </body>
 
 </html>
