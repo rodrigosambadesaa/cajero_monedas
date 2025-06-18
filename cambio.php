@@ -16,6 +16,24 @@ $amount = '1';
 $conversion_result = null;
 $error = '';
 
+// Obtener la fecha más antigua disponible desde la API de Frankfurter
+function get_earliest_api_date()
+{
+    $info_url = 'https://api.frankfurter.app/currencies';
+    $context = stream_context_create(['http' => ['timeout' => 2]]);
+    $response = @file_get_contents('https://api.frankfurter.app/');
+    if ($response !== FALSE) {
+        $data = json_decode($response, true);
+        if (isset($data['start_date'])) {
+            return $data['start_date'];
+        }
+    }
+    // Fallback si la API no responde o no da la fecha
+    return '1999-01-04';
+}
+
+$earliest_api_date = get_earliest_api_date();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         $error = "Error de validación (CSRF).";
@@ -303,6 +321,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="chart-controls">
                     <label for="period-selector">Período:</label>
                     <select id="period-selector">
+                        <option value="7d">Últimos 7 Días</option>
+                        <option value="15d">Últimos 15 Días</option>
                         <option value="1m">Último Mes</option>
                         <option value="3m" selected>Últimos 3 Meses</option>
                         <option value="6m">Últimos 6 Meses</option>
@@ -310,7 +330,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <option value="3y">Últimos 3 Años</option>
                         <option value="5y">Últimos 5 Años</option>
                         <option value="10y">Últimos 10 Años</option>
-                        <option value="max">Desde 1999</option>
+                        <option value="15y">Últimos 15 Años</option>
+                        <option value="20y">Últimos 20 Años</option>
+                        <option value="25y">Últimos 25 Años</option>
+                        <option value="max">Desde <?php echo date('Y', strtotime($earliest_api_date)); ?></option>
                         <option value="custom">Rango Personalizado</option>
                     </select>
                     <div id="custom-range-picker" style="display:none; gap: 1rem;">
@@ -333,7 +356,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             document.addEventListener('DOMContentLoaded', function () {
                 const fromCurrency = '<?php echo addslashes($conversion_result['from']); ?>';
                 const toCurrency = '<?php echo addslashes($conversion_result['to']); ?>';
-                const earliestApiDate = '1999-01-04';
+                const earliestApiDate = '<?php echo $earliest_api_date; ?>';
                 // SIMULAMOS LA FECHA ACTUAL PARA COHERENCIA CON EL CONTEXTO
                 const today = new Date('2025-06-18');
 
@@ -350,6 +373,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 endDateInput.max = formatDate(today);
                 endDateInput.value = formatDate(today);
                 startDateInput.max = formatDate(today);
+                startDateInput.min = earliestApiDate;
 
                 function formatDate(date) {
                     return date.toISOString().split('T')[0];
@@ -362,7 +386,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Validar y ajustar fecha de inicio
                     if (new Date(startDateStr) < new Date(earliestApiDate)) {
                         adjustedStartDateStr = earliestApiDate;
-                        chartMessage.textContent = 'Aviso: La fecha de inicio se ha ajustado al primer día con datos disponibles (04/01/1999).';
+                        chartMessage.textContent = 'Aviso: La fecha de inicio se ha ajustado al primer día con datos disponibles (' + earliestApiDate.split('-').reverse().join('/') + ').';
                     }
 
                     const historyApiUrl = `https://api.frankfurter.app/${adjustedStartDateStr}..${endDateStr}?from=${fromCurrency}&to=${toCurrency}`;
@@ -389,6 +413,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (chartInstance) {
                         chartInstance.destroy();
                     }
+                    const amount = <?php echo json_encode((float) $conversion_result['amount']); ?>;
                     chartInstance = new Chart(ctx, {
                         type: 'line',
                         data: {
@@ -413,6 +438,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     title: { display: true, text: 'Fecha' }
                                 },
                                 y: { title: { display: true, text: 'Tasa de Cambio' } }
+                            },
+                            plugins: {
+                                tooltip: {
+                                    callbacks: {
+                                        label: function (context) {
+                                            const tasa = context.parsed.y;
+                                            const valor = tasa * amount;
+                                            return [
+                                                `Tasa: ${tasa.toFixed(4)} ${toCurrency} por 1 ${fromCurrency}`,
+                                                `Valor convertido: ${valor.toFixed(2)} ${toCurrency}`
+                                            ];
+                                        }
+                                    }
+                                }
                             }
                         }
                     });
@@ -436,6 +475,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     switch (period) {
+                        case '7d': startDate.setDate(startDate.getDate() - 7); break;
+                        case '15d': startDate.setDate(startDate.getDate() - 15); break;
                         case '1m': startDate.setMonth(startDate.getMonth() - 1); break;
                         case '3m': startDate.setMonth(startDate.getMonth() - 3); break;
                         case '6m': startDate.setMonth(startDate.getMonth() - 6); break;
@@ -443,6 +484,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         case '3y': startDate.setFullYear(startDate.getFullYear() - 3); break;
                         case '5y': startDate.setFullYear(startDate.getFullYear() - 5); break;
                         case '10y': startDate.setFullYear(startDate.getFullYear() - 10); break;
+                        case '15y': startDate.setFullYear(startDate.getFullYear() - 15); break;
+                        case '20y': startDate.setFullYear(startDate.getFullYear() - 20); break;
+                        case '25y': startDate.setFullYear(startDate.getFullYear() - 25); break;
                         case 'max': startDate = new Date(earliestApiDate); break;
                     }
 
