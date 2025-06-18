@@ -14,11 +14,10 @@ if (empty($_SESSION['csrf_token'])) {
 $all_currencies = get_all_currencies();
 $all_stock = get_all_stock();
 
-// --- INICIO: Variables para persistencia del formulario ---
+// Variables para persistencia del formulario
 $selected_currency_code = 'EUR'; // Valor por defecto
 $selected_mode = 'infinito';     // Valor por defecto
 $cantidad_str = '';              // Valor por defecto
-// --- FIN: Variables para persistencia del formulario ---
 
 $resultados = null;
 $error = '';
@@ -31,11 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $modo = filter_input(INPUT_POST, 'modo', FILTER_SANITIZE_STRING);
         $cantidad_post = filter_input(INPUT_POST, 'cantidad', FILTER_SANITIZE_STRING);
 
-        // --- INICIO: Actualizar variables de persistencia con datos del POST ---
+        // Actualizar variables de persistencia con datos del POST
         $selected_currency_code = $currency_code;
         $selected_mode = $modo;
         $cantidad_str = $cantidad_post;
-        // --- FIN: Actualizar variables de persistencia ---
 
         if (!isset($all_currencies[$currency_code])) {
             $error = "La divisa seleccionada no es válida.";
@@ -52,9 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $valor_str = (string) $valor;
                     if (bccomp($cantidadRestante_str, $valor_str) >= 0) {
                         $numMonedas_str = bcdiv($cantidadRestante_str, $valor_str, 0);
-                        $solucion[$valor] = $numMonedas_str;
-                        $decremento = bcmul($numMonedas_str, $valor_str);
-                        $cantidadRestante_str = bcsub($cantidadRestante_str, $decremento);
+                        if (bccomp($numMonedas_str, '0') > 0) {
+                            $solucion[$valor] = $numMonedas_str;
+                            $decremento = bcmul($numMonedas_str, $valor_str);
+                            $cantidadRestante_str = bcsub($cantidadRestante_str, $decremento);
+                        }
                     }
                 }
                 if (bccomp($cantidadRestante_str, '0') == 0)
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($cambioPosible) {
                 $resultados['solucion'] = $solucion;
             } else if (!$error) {
-                $error = "No es posible dar el cambio exacto para esa cantidad.";
+                $error = "No es posible dar el cambio exacto para esa cantidad con las monedas disponibles.";
             }
             $resultados['moneda_nombre'] = $all_currencies[$currency_code]['name'];
             $resultados['moneda_simbolo'] = $all_currencies[$currency_code]['symbol'];
@@ -109,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cajero de Cambio Universal</title>
+    <title>Calculadora de Cambio</title>
     <style>
         :root {
             --primary-color: #005A9C;
@@ -148,6 +148,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: var(--primary-color);
             text-align: center;
             margin-bottom: 1.5rem;
+        }
+
+        nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            background-color: var(--dark-color);
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 2rem;
+        }
+
+        nav a {
+            color: var(--white-color);
+            text-decoration: none;
+            font-weight: 600;
+            padding: 0.5rem;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        nav a:hover,
+        nav a.active {
+            background-color: var(--secondary-color);
         }
 
         form .form-group {
@@ -280,38 +304,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <body>
     <div class="container">
-        <h1>Cajero de Cambio Universal</h1>
+        <nav>
+            <a href="index.php" class="active">Calculadora de Cambio</a>
+            <a href="cambio.php">Cambio de Divisa</a>
+            <a href="reponer.php">Reponer Stock</a>
+        </nav>
+
+        <h1>Calculadora de Cambio de Monedas</h1>
         <form action="index.php" method="post">
             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
             <div class="form-group">
                 <label for="moneda">Seleccione la Divisa</label>
                 <select name="moneda" id="moneda" required>
                     <?php foreach ($all_currencies as $code => $details): ?>
-                        <?php // INICIO: Lógica para mantener la selección ?>
                         <option value="<?php echo $code; ?>" <?php echo ($code === $selected_currency_code) ? 'selected' : ''; ?>>
                             <?php echo htmlspecialchars($details['name']) . " ($code)"; ?>
                         </option>
-                        <?php // FIN: Lógica para mantener la selección ?>
                     <?php endforeach; ?>
                 </select>
             </div>
             <div class="form-group">
                 <label>Modo de operación</label>
                 <div class="radio-group">
-                    <?php // INICIO: Lógica para mantener la selección del radio button ?>
                     <input type="radio" id="infinito" name="modo" value="infinito" <?php echo ($selected_mode === 'infinito') ? 'checked' : ''; ?>>
                     <label for="infinito">Monedas Infinitas</label>
                     <input type="radio" id="limitado" name="modo" value="limitado" <?php echo ($selected_mode === 'limitado') ? 'checked' : ''; ?>>
                     <label for="limitado">Stock Limitado</label>
-                    <?php // FIN: Lógica para mantener la selección del radio button ?>
                 </div>
             </div>
             <div class="form-group">
                 <label for="cantidad">Cantidad a devolver (en la unidad mínima)</label>
-                <?php // INICIO: Lógica para mantener el valor introducido ?>
                 <input type="text" id="cantidad" name="cantidad" inputmode="numeric" pattern="[0-9]*" required
                     value="<?php echo htmlspecialchars($cantidad_str); ?>">
-                <?php // FIN: Lógica para mantener el valor introducido ?>
             </div>
 
             <div class="form-buttons">
@@ -352,10 +376,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
             </div>
         <?php endif; ?>
-
-        <div class="footer-link">
-            <a href="reponer.php">Ir a reponer stock &rarr;</a>
-        </div>
     </div>
 </body>
 

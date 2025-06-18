@@ -22,7 +22,7 @@ if (isset($_REQUEST['moneda'])) {
     $temp_code = filter_input(isset($_POST['moneda']) ? INPUT_POST : INPUT_GET, 'moneda', FILTER_SANITIZE_STRING);
     if (isset($all_currencies[$temp_code])) {
         $currency_code = $temp_code;
-    } else {
+    } else if (!empty($temp_code)) { // Mostrar error solo si se envió un código no vacío
         $error = "La divisa seleccionada no es válida.";
     }
 }
@@ -40,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
                 $valido = false;
                 break;
             }
+            // Actualizar el stock para la moneda seleccionada
             $all_stock[$currency_code][(string) $denomination] = $cantidad_str;
         }
 
@@ -98,6 +99,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             color: var(--primary-color);
             text-align: center;
             margin-bottom: 1.5rem;
+        }
+
+        nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            background-color: var(--dark-color);
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 2rem;
+        }
+
+        nav a {
+            color: var(--white-color);
+            text-decoration: none;
+            font-weight: 600;
+            padding: 0.5rem;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        nav a:hover,
+        nav a.active {
+            background-color: var(--secondary-color);
         }
 
         form .form-group {
@@ -178,21 +203,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             color: #14532D;
         }
 
-        .footer-link {
-            text-align: center;
-            margin-top: 2rem;
-        }
-
-        .footer-link a {
-            color: var(--secondary-color);
-            text-decoration: none;
-            font-weight: 600;
-        }
-
-        .footer-link a:hover {
-            text-decoration: underline;
-        }
-
         .stock-item {
             display: flex;
             justify-content: space-between;
@@ -207,6 +217,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
 
 <body>
     <div class="container">
+        <nav>
+            <a href="index.php">Calculadora de Cambio</a>
+            <a href="cambio.php">Cambio de Divisa</a>
+            <a href="reponer.php" class="active">Reponer Stock</a>
+        </nav>
+
         <h1>Reponer Stock</h1>
 
         <?php if ($mensaje): ?>
@@ -252,14 +268,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
 
                 <div class="form-buttons">
                     <button type="submit">Actualizar Stock</button>
-                    <button type="reset">Resetear</button>
+                    <button type="reset">Resetear Valores</button>
                 </div>
             </form>
         <?php endif; ?>
-
-        <div class="footer-link">
-            <a href="index.php">&larr; Volver a la calculadora</a>
-        </div>
     </div>
 </body>
 
