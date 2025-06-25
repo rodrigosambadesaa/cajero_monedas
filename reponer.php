@@ -273,6 +273,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stock'])) {
             </form>
         <?php endif; ?>
     </div>
+    <script>
+        // Validación de stock: solo enteros no negativos
+        document.addEventListener('DOMContentLoaded', function () {
+            const stockForm = document.querySelector('form[action="reponer.php"][method="post"]');
+            if (stockForm) {
+                stockForm.addEventListener('submit', function (e) {
+                    let valid = true;
+                    let firstInvalid = null;
+                    const inputs = stockForm.querySelectorAll('input[name^="stock["]');
+                    inputs.forEach(input => {
+                        const value = input.value.trim();
+                        if (!/^\d+$/.test(value)) {
+                            valid = false;
+                            if (!firstInvalid) firstInvalid = input;
+                            input.style.borderColor = '#DC2626';
+                        } else {
+                            input.style.borderColor = '';
+                        }
+                    });
+                    if (!valid) {
+                        e.preventDefault();
+                        alert('Por favor, ingrese solo números enteros no negativos en todos los campos de stock.');
+                        if (firstInvalid) firstInvalid.focus();
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 
 </html>

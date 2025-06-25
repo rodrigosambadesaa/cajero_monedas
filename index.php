@@ -378,6 +378,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         <?php endif; ?>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const form = document.querySelector('form');
+            const cantidadInput = document.getElementById('cantidad');
+            const monedaSelect = document.getElementById('moneda');
+            const modoRadios = document.getElementsByName('modo');
+
+            form.addEventListener('submit', function (e) {
+                let valid = true;
+                let mensajes = [];
+
+                // Validar cantidad: solo números positivos, no vacío
+                const cantidad = cantidadInput.value.trim();
+                if (!/^[0-9]+$/.test(cantidad) || cantidad === '' || /^0+$/.test(cantidad)) {
+                    valid = false;
+                    mensajes.push('La cantidad debe ser un número positivo.');
+                }
+
+                // Validar moneda seleccionada
+                if (!monedaSelect.value) {
+                    valid = false;
+                    mensajes.push('Debe seleccionar una divisa.');
+                }
+
+                // Validar modo seleccionado
+                let modoSeleccionado = false;
+                for (const radio of modoRadios) {
+                    if (radio.checked) {
+                        modoSeleccionado = true;
+                        break;
+                    }
+                }
+                if (!modoSeleccionado) {
+                    valid = false;
+                    mensajes.push('Debe seleccionar un modo de operación.');
+                }
+
+                if (!valid) {
+                    e.preventDefault();
+                    alert(mensajes.join('\n'));
+                }
+            });
+        });
+    </script>
 </body>
 
 </html>

@@ -508,6 +508,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 updateChartFromSelection();
             });
         <?php endif; ?>
+
+        // Validación de formulario del lado cliente para mayor seguridad
+        document.addEventListener('DOMContentLoaded', function () {
+            const form = document.querySelector('form[action="cambio.php"]');
+            if (form) {
+                form.addEventListener('submit', function (e) {
+                    let valid = true;
+                    let errorMsg = '';
+                    const amount = document.getElementById('amount').value.trim();
+                    const from = document.getElementById('from_currency').value;
+                    const to = document.getElementById('to_currency').value;
+
+                    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+                        valid = false;
+                        errorMsg = 'La cantidad debe ser un número positivo.';
+                    } else if (from === to) {
+                        valid = false;
+                        errorMsg = 'Las divisas de origen y destino no pueden ser las mismas.';
+                    }
+
+                    if (!valid) {
+                        e.preventDefault();
+                        // Mostrar error arriba del formulario si existe el div .error, si no, alert
+                        let errorDiv = document.querySelector('.error');
+                        if (!errorDiv) {
+                            errorDiv = document.createElement('div');
+                            errorDiv.className = 'error';
+                            form.parentNode.insertBefore(errorDiv, form.nextSibling);
+                        }
+                        errorDiv.innerHTML = '<strong>Error:</strong> ' + errorMsg;
+                    }
+                });
+            }
+        });
     </script>
 </body>
 
