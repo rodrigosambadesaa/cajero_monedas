@@ -16,12 +16,19 @@ $amount = '1';
 $conversion_result = null;
 $error = '';
 
+// Fixed HTTPS endpoints: do not follow redirects to a different transport.
+function frankfurterTlsContext(int $timeout)
+{
+    return stream_context_create([
+        'http' => ['timeout' => $timeout, 'follow_location' => 0, 'max_redirects' => 0],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+}
+
 // Obtener la fecha más antigua disponible desde la API de Frankfurter
 function get_earliest_api_date()
 {
-    $info_url = 'https://api.frankfurter.app/currencies';
-    $context = stream_context_create(['http' => ['timeout' => 2]]);
-    $response = @file_get_contents('https://api.frankfurter.app/');
+    $response = @file_get_contents('https://api.frankfurter.app/', false, frankfurterTlsContext(2));
     if ($response !== FALSE) {
         $data = json_decode($response, true);
         if (isset($data['start_date'])) {
@@ -55,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $api_url = "https://api.frankfurter.app/latest?amount=" . urlencode($amount) . "&from=" . urlencode($from_currency) . "&to=" . urlencode($to_currency);
 
-            $response = @file_get_contents($api_url);
+            $response = @file_get_contents($api_url, false, frankfurterTlsContext(10));
             if ($response === FALSE) {
                 $error = "No se pudo contactar con el servicio de cambio de divisa. Inténtelo más tarde.";
             } else {
