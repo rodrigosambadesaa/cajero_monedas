@@ -28,14 +28,7 @@ function frankfurterTlsContext(int $timeout)
 // Obtener la fecha más antigua disponible desde la API de Frankfurter
 function get_earliest_api_date()
 {
-    $response = @file_get_contents('https://api.frankfurter.app/', false, frankfurterTlsContext(2));
-    if ($response !== FALSE) {
-        $data = json_decode($response, true);
-        if (isset($data['start_date'])) {
-            return $data['start_date'];
-        }
-    }
-    // Fallback si la API no responde o no da la fecha
+    // First historical date documented by Frankfurter v1.
     return '1999-01-04';
 }
 
@@ -60,22 +53,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($from_currency === $to_currency) {
             $error = 'Las divisas de origen y destino no pueden ser las mismas.';
         } else {
-            $api_url = "https://api.frankfurter.app/latest?amount=" . urlencode($amount) . "&from=" . urlencode($from_currency) . "&to=" . urlencode($to_currency);
+            $api_url = "https://api.frankfurter.dev/v1/latest?base=" . urlencode($from_currency) . "&symbols=" . urlencode($to_currency);
 
             $response = @file_get_contents($api_url, false, frankfurterTlsContext(10));
             if ($response === FALSE) {
                 $error = "No se pudo contactar con el servicio de cambio de divisa. Inténtelo más tarde.";
             } else {
                 $data = json_decode($response, true);
-                if (isset($data['rates'][$to_currency])) {
+                if (isset($data['rates'][$to_currency]) && is_numeric($data['rates'][$to_currency]) && is_finite((float) $data['rates'][$to_currency]) && (float) $data['rates'][$to_currency] > 0) {
                     $conversion_result = [
                         'amount' => $amount,
                         'from' => $from_currency,
                         'from_symbol' => $all_currencies[$from_currency]['symbol'],
                         'to' => $to_currency,
                         'to_symbol' => $all_currencies[$to_currency]['symbol'],
-                        'rate' => $data['rates'][$to_currency] / $amount,
-                        'result' => $data['rates'][$to_currency]
+                        'rate' => (float) $data['rates'][$to_currency],
+                        'result' => (float) $data['rates'][$to_currency] * (float) $amount
                     ];
                 } else {
                     $error = "No se pudo obtener la tasa de cambio para las divisas seleccionadas.";
@@ -396,10 +389,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         chartMessage.textContent = 'Aviso: La fecha de inicio se ha ajustado al primer día con datos disponibles (' + earliestApiDate.split('-').reverse().join('/') + ').';
                     }
 
-                    const historyApiUrl = `https://api.frankfurter.app/${adjustedStartDateStr}..${endDateStr}?from=${fromCurrency}&to=${toCurrency}`;
+                    const historyApiUrl = `https://api.frankfurter.dev/v1/${adjustedStartDateStr}..${endDateStr}?base=${encodeURIComponent(fromCurrency)}&symbols=${encodeURIComponent(toCurrency)}`;
 
-                    fetch(historyApiUrl)
-                        .then(response => response.json())
+                    fetch(historyApiUrl, { redirect: 'error' })
+                        .then(response => {
+                            if (!response.ok) throw new Error('HTTP ' + response.status);
+                            return response.json();
+                        })
                         .then(data => {
                             if (data.rates && Object.keys(data.rates).length > 0) {
                                 const rates = data.rates;
